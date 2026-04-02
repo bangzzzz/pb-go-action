@@ -35,6 +35,10 @@ type Service struct {
 	// GoModule is the Go module name written into the generated go.mod.
 	// If empty no go.mod is created / updated.
 	GoModule string `yaml:"go_module"`
+
+	// Plugins overrides the top-level plugins list for this service only.
+	// When non-empty, the top-level plugins are ignored for this service.
+	Plugins []Plugin `yaml:"plugins"`
 }
 
 // Plugin describes a single protoc generator plugin (e.g. go, go-grpc).
@@ -50,6 +54,16 @@ type Plugin struct {
 	// Opt holds the option strings passed to --<name>_opt, e.g.
 	// ["paths=source_relative", "require_unimplemented_servers=false"].
 	Opt []string `yaml:"opt"`
+}
+
+// PluginsFor returns the effective plugin list for svc.
+// If svc defines its own plugins, those are returned; otherwise the top-level
+// plugins list is used as the default.
+func (c *Config) PluginsFor(svc *Service) []Plugin {
+	if len(svc.Plugins) > 0 {
+		return svc.Plugins
+	}
+	return c.Plugins
 }
 
 // Load reads and validates the configuration from the given YAML file path.
@@ -87,10 +101,27 @@ func validate(cfg *Config) error {
 		if svc.TargetRepo == "" {
 			return fmt.Errorf("service %q: 'target_repo' is required", svc.Name)
 		}
+		// Normalise service-level plugin Out defaults.
+		for j := range svc.Plugins {
+			if svc.Plugins[j].Name == "" {
+				return fmt.Errorf("service %q: plugins[%d]: 'name' is required", svc.Name, j)
+			}
+			if svc.Plugins[j].Out == "" {
+				svc.Plugins[j].Out = "."
+			}
+		}
+	}
+
+	// Validate that every service has at least one plugin (either its own or global).
+	for i := range cfg.Services {
+		svc := &cfg.Services[i]
+		if len(svc.Plugins) == 0 && len(cfg.Plugins) == 0 {
+			return fmt.Errorf("service %q has no plugins and no global plugins are defined", svc.Name)
+		}
 	}
 
 	if len(cfg.Plugins) == 0 {
-		return fmt.Errorf("at least one plugin must be defined under 'plugins'")
+		return nil
 	}
 
 	for i := range cfg.Plugins {

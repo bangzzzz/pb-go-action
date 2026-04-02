@@ -60,23 +60,30 @@ services:
       - proto/common
     target_repo: my-org/user-pb-go  # owner/repo of the generated-code repository
     go_module: github.com/my-org/user-pb-go  # module name written into go.mod
+    # service-level plugins override the global list for this service only
+    plugins:
+      - name: go
+        out: .
+        opt:
+          - paths=source_relative
+      - name: go-grpc
+        out: .
+        opt:
+          - paths=source_relative
+          - require_unimplemented_servers=false
 
   - name: order-service
     proto_dir: proto/order
     target_repo: my-org/order-pb-go
     go_module: github.com/my-org/order-pb-go
+    # no plugins: → falls back to the global list below
 
+# Global default plugins (used for any service that does not define its own).
 plugins:
   - name: go
     out: .
     opt:
       - paths=source_relative
-
-  - name: go-grpc
-    out: .
-    opt:
-      - paths=source_relative
-      - require_unimplemented_servers=false
 ```
 
 ---
@@ -104,8 +111,12 @@ plugins:
 | `include_dirs` | no | Additional `-I` include paths for `protoc` (relative to repo root). |
 | `target_repo` | **yes** | GitHub repository slug (`owner/repo`) receiving generated code. |
 | `go_module` | no | Go module name.  If set, a `go.mod` is created/kept in the target repo. |
+| `plugins` | no | Per-service plugin list.  **Overrides** the top-level `plugins` when set.  Falls back to the top-level list when omitted. |
 
 ### `plugins[]`
+
+Defines the default plugins applied to every service that does not specify its own `plugins`.
+The same schema is used for both the top-level list and the per-service list.
 
 Each entry maps to a `protoc-gen-<name>` binary that must exist in `PATH`.
 

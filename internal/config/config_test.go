@@ -48,7 +48,7 @@ plugins:
 	}
 
 	if len(cfg.Plugins) != 2 {
-		t.Fatalf("expected 2 plugins, got %d", len(cfg.Plugins))
+		t.Fatalf("expected 2 global plugins, got %d", len(cfg.Plugins))
 	}
 	if cfg.Plugins[0].Name != "go" {
 		t.Errorf("unexpected plugin name: %s", cfg.Plugins[0].Name)
@@ -56,9 +56,87 @@ plugins:
 	if cfg.Plugins[1].Name != "go-grpc" {
 		t.Errorf("unexpected plugin name: %s", cfg.Plugins[1].Name)
 	}
+
+	// Global plugins should be returned for this service (no service-level plugins).
+	resolved := cfg.PluginsFor(&cfg.Services[0])
+	if len(resolved) != 2 {
+		t.Errorf("expected 2 resolved plugins, got %d", len(resolved))
+	}
 }
 
-func TestLoad_DefaultOut(t *testing.T) {
+func TestLoad_ServicePluginsOverride(t *testing.T) {
+	content := `
+services:
+  - name: user-service
+    proto_dir: proto/user
+    target_repo: org/user-pb-go
+    plugins:
+      - name: go
+        out: .
+        opt:
+          - paths=source_relative
+  - name: order-service
+    proto_dir: proto/order
+    target_repo: org/order-pb-go
+    plugins:
+      - name: go
+        out: .
+      - name: go-grpc
+        out: .
+`
+	path := writeTemp(t, content)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	userPlugins := cfg.PluginsFor(&cfg.Services[0])
+	if len(userPlugins) != 1 || userPlugins[0].Name != "go" {
+		t.Errorf("user-service: expected [go], got %v", pluginNames(userPlugins))
+	}
+
+	orderPlugins := cfg.PluginsFor(&cfg.Services[1])
+	if len(orderPlugins) != 2 {
+		t.Errorf("order-service: expected 2 plugins, got %v", pluginNames(orderPlugins))
+	}
+}
+
+func TestLoad_MixedPlugins(t *testing.T) {
+	// user-service has its own plugins; order-service falls back to global.
+	content := `
+services:
+  - name: user-service
+    proto_dir: proto/user
+    target_repo: org/user-pb-go
+    plugins:
+      - name: go-grpc
+        out: .
+  - name: order-service
+    proto_dir: proto/order
+    target_repo: org/order-pb-go
+
+plugins:
+  - name: go
+    out: .
+`
+	path := writeTemp(t, content)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	userPlugins := cfg.PluginsFor(&cfg.Services[0])
+	if len(userPlugins) != 1 || userPlugins[0].Name != "go-grpc" {
+		t.Errorf("user-service: expected [go-grpc], got %v", pluginNames(userPlugins))
+	}
+
+	orderPlugins := cfg.PluginsFor(&cfg.Services[1])
+	if len(orderPlugins) != 1 || orderPlugins[0].Name != "go" {
+		t.Errorf("order-service: expected [go], got %v", pluginNames(orderPlugins))
+	}
+}
+
+func TestLoad_DefaultOut_GlobalPlugin(t *testing.T) {
 	content := `
 services:
   - name: svc
@@ -74,6 +152,25 @@ plugins:
 	}
 	if cfg.Plugins[0].Out != "." {
 		t.Errorf("expected default out '.', got %q", cfg.Plugins[0].Out)
+	}
+}
+
+func TestLoad_DefaultOut_ServicePlugin(t *testing.T) {
+	content := `
+services:
+  - name: svc
+    proto_dir: proto
+    target_repo: org/svc-pb-go
+    plugins:
+      - name: go
+`
+	path := writeTemp(t, content)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Services[0].Plugins[0].Out != "." {
+		t.Errorf("expected default out '.', got %q", cfg.Services[0].Plugins[0].Out)
 	}
 }
 
@@ -96,7 +193,25 @@ plugins:
 	}
 }
 
-func TestLoad_NoPlugins(t *testing.T) {
+func TestLoad_NoPlugins_ServiceHasOwn(t *testing.T) {
+	// No global plugins, but each service defines its own — should be valid.
+	content := `
+services:
+  - name: svc
+    proto_dir: proto
+    target_repo: org/svc-pb-go
+    plugins:
+      - name: go
+`
+	path := writeTemp(t, content)
+	_, err := Load(path)
+	if err != nil {
+		t.Fatalf("expected no error when all services define their own plugins, got: %v", err)
+	}
+}
+
+func TestLoad_NoPlugins_ServiceMissingPlugins(t *testing.T) {
+	// No global plugins and at least one service has none — should fail.
 	content := `
 services:
   - name: svc
@@ -106,7 +221,7 @@ services:
 	path := writeTemp(t, content)
 	_, err := Load(path)
 	if err == nil {
-		t.Fatal("expected error for missing plugins")
+		t.Fatal("expected error when service has no plugins and no global plugins defined")
 	}
 }
 
@@ -169,4 +284,12 @@ func writeTemp(t *testing.T, content string) string {
 	}
 	f.Close()
 	return filepath.Clean(f.Name())
+}
+
+func pluginNames(plugins []Plugin) []string {
+	names := make([]string, len(plugins))
+	for i, p := range plugins {
+		names[i] = p.Name
+	}
+	return names
 }

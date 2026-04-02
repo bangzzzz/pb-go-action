@@ -46,13 +46,14 @@ func Generate(workspace string, cfg *config.Config, svc *config.Service) (string
 	includeDirs = dedup(includeDirs)
 
 	// Assemble protoc arguments.
-	args := make([]string, 0, len(includeDirs)+len(cfg.Plugins)*2+len(protoFiles))
+	plugins := cfg.PluginsFor(svc)
+	args := make([]string, 0, len(includeDirs)+len(plugins)*2+len(protoFiles))
 	for _, d := range includeDirs {
 		args = append(args, "-I"+d)
 	}
 
 	// Add one --<plugin>_out (and optional --<plugin>_opt) flag per plugin.
-	for _, plugin := range cfg.Plugins {
+	for _, plugin := range plugins {
 		pluginOut := filepath.Join(outRoot, plugin.Out)
 		if err := os.MkdirAll(pluginOut, 0o755); err != nil {
 			return "", fmt.Errorf("creating output dir for plugin %q: %w", plugin.Name, err)
