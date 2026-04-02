@@ -1,0 +1,40 @@
+name: 'PB Go Action'
+description: 'Generate Go code from Protobuf IDL files and push to target GitHub repositories'
+author: 'bangzzzz'
+
+inputs:
+  config:
+    description: 'Path to the config file relative to workspace root'
+    required: false
+    default: '.pb-go-action.yml'
+  github_token:
+    description: 'GitHub token with write access to target repositories'
+    required: true
+  changed_files:
+    description: |
+      Newline-separated list of changed .proto file paths (relative to workspace root).
+      If not provided, the action will auto-detect changes using git diff.
+    required: false
+    default: ''
+  git_user_name:
+    description: 'Git user name for commits to target repositories'
+    required: false
+    default: 'PB Go Action'
+  git_user_email:
+    description: 'Git user email for commits to target repositories'
+    required: false
+    default: 'pb-go-action[bot]@users.noreply.github.com'
+
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
+  env:
+    INPUT_CONFIG: ${{ inputs.config }}
+    INPUT_GITHUB_TOKEN: ${{ inputs.github_token }}
+    INPUT_CHANGED_FILES: ${{ inputs.changed_files }}
+    INPUT_GIT_USER_NAME: ${{ inputs.git_user_name }}
+    INPUT_GIT_USER_EMAIL: ${{ inputs.git_user_email }}
+
+branding:
+  icon: 'package'
+  color: 'blue'
