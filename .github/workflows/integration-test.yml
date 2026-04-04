@@ -1,0 +1,92 @@
+name: Integration Test
+
+# Run when any testdata proto file or the action source itself changes on the
+# main branch, and on every pull request that touches those paths.
+# Can also be triggered manually for a one-off run.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'testdata/**'
+      - 'internal/**'
+      - 'main.go'
+      - 'Dockerfile'
+      - 'testdata/pb-go-action.integration.yml'
+  pull_request:
+    paths:
+      - 'testdata/**'
+      - 'internal/**'
+      - 'main.go'
+      - 'Dockerfile'
+      - 'testdata/pb-go-action.integration.yml'
+  workflow_dispatch:
+
+jobs:
+  integration-test:
+    name: Generate & Push (user-service → bangzzzz/pb-go-action-test)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout IDL repository
+        uses: actions/checkout@v4
+        with:
+          # Full history so the action can diff changed proto files.
+          fetch-depth: 0
+
+      # Run the action with the integration-test config.
+      # We pass the full list of proto files as changed_files so the action
+      # always processes the user-service during the integration test,
+      # regardless of what actually changed in the triggering commit.
+      - name: Run pb-go-action (user-service)
+        uses: ./
+        with:
+          config: testdata/pb-go-action.integration.yml
+          github_token: ${{ secrets.INTEGRATION_TEST_TOKEN }}
+          changed_files: |
+            testdata/proto/user/model.proto
+            testdata/proto/user/user.proto
+          git_user_name: pb-go-action integration test
+          git_user_email: pb-go-action-integration[bot]@users.noreply.github.com
+
+      # ── Verification ─────────────────────────────────────────────────────────
+      # Check that the generated files were actually pushed to the target repo.
+      - name: Verify generated files in target repository
+        env:
+          GH_TOKEN: ${{ secrets.INTEGRATION_TEST_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          TARGET_REPO="bangzzzz/pb-go-action-test"
+          BRANCH="${GITHUB_REF_NAME:-main}"
+
+          echo "Checking generated files in ${TARGET_REPO} on branch ${BRANCH} ..."
+
+          # Fetch the file tree from the target repo on the expected branch.
+          # Fall back to 'main' if the branch does not exist yet (first run).
+          FILES=$(gh api \
+            "repos/${TARGET_REPO}/git/trees/${BRANCH}?recursive=1" \
+            --jq '[.tree[].path]' 2>/dev/null || \
+            gh api \
+            "repos/${TARGET_REPO}/git/trees/main?recursive=1" \
+            --jq '[.tree[].path]')
+
+          echo "Files found in ${TARGET_REPO}:"
+          echo "${FILES}" | jq -r '.[]'
+
+          # Assert that the expected generated files are present.
+          for expected in \
+              "model.pb.go" \
+              "user.pb.go" \
+              "user_grpc.pb.go"; do
+            if echo "${FILES}" | jq -r '.[]' | grep -q "${expected}"; then
+              echo "✓ ${expected} present"
+            else
+              echo "✗ ${expected} MISSING" >&2
+              exit 1
+            fi
+          done
+
+          echo "All expected generated files are present. Integration test passed."
