@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,6 +42,11 @@ func Push(svc *config.Service, generatedDir string, cfg Config) error {
 	defer os.RemoveAll(cloneDir)
 
 	repoURL := repoHTTPSURL(svc.TargetRepo, cfg.Token)
+
+	// Create the target repository via the GitHub API if it does not exist yet.
+	if err := ensureRepoExists(svc.TargetRepo, cfg.Token); err != nil {
+		return fmt.Errorf("ensuring target repo exists: %w", err)
+	}
 
 	// Try to clone the specific branch; if it does not exist, clone the default
 	// branch and create it locally.
@@ -189,4 +195,115 @@ func ensureGoMod(dir, moduleName string) error {
 	}
 	content := fmt.Sprintf("module %s\n\ngo 1.22\n", moduleName)
 	return os.WriteFile(goModPath, []byte(content), 0o644)
+}
+
+// ── GitHub repository helpers ─────────────────────────────────────────────────
+
+// apiBase is the GitHub API root URL.  It is a variable so tests can override
+// it to point at a local httptest server.
+var apiBase = "https://api.github.com"
+
+// ensureRepoExists creates the GitHub repository identified by slug
+// ("owner/repo") via the GitHub API if it does not already exist.
+func ensureRepoExists(slug, token string) error {
+	parts := strings.SplitN(slug, "/", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid repo slug %q (expected owner/repo)", slug)
+	}
+	owner, repo := parts[0], parts[1]
+
+	exists, err := repoExists(owner, repo, token)
+	if err != nil {
+		return fmt.Errorf("checking whether repo %s exists: %w", slug, err)
+	}
+	if exists {
+		return nil
+	}
+
+	fmt.Printf("target repository %s not found – creating via GitHub API …\n", slug)
+
+	// Choose the correct creation endpoint depending on whether the owner is a
+	// GitHub organisation or a plain user account.
+	isOrg, err := ownerIsOrg(owner, token)
+	if err != nil {
+		return fmt.Errorf("determining owner type for %q: %w", owner, err)
+	}
+
+	var apiURL string
+	if isOrg {
+		apiURL = fmt.Sprintf("%s/orgs/%s/repos", apiBase, owner)
+	} else {
+		apiURL = fmt.Sprintf("%s/user/repos", apiBase)
+	}
+
+	body := fmt.Sprintf(`{"name":%q,"private":false,"auto_init":true}`, repo)
+	req, err := http.NewRequest(http.MethodPost, apiURL, strings.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("building create-repo request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("creating repo %s: %w", slug, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("creating repo %s: GitHub API returned %d: %s", slug, resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+
+	fmt.Printf("created repository %s\n", slug)
+	return nil
+}
+
+// repoExists reports whether the GitHub repository owner/repo is accessible
+// with the given token.
+func repoExists(owner, repo, token string) (bool, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s", apiBase, owner, repo)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected status %d checking repo %s/%s", resp.StatusCode, owner, repo)
+	}
+}
+
+// ownerIsOrg reports whether the GitHub account named owner is an organisation.
+func ownerIsOrg(owner, token string) (bool, error) {
+	url := fmt.Sprintf("%s/orgs/%s", apiBase, owner)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	return resp.StatusCode == http.StatusOK, nil
 }
