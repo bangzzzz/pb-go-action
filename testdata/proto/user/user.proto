@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package user.v1;
+
+import "testdata/proto/user/model.proto";
+
+option go_package = "github.com/bangzzzz/pb-go-action-test/user/v1;userv1";
+
+// UserService provides CRUD operations for users.
+service UserService {
+  // GetUser fetches a single user by ID.
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+
+  // ListUsers returns a paginated list of users.
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+
+  // CreateUser creates a new user.
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+
+  // DeleteUser removes a user by ID.
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
+}
+
+message GetUserRequest {
+  string id = 1;
+}
+
+message GetUserResponse {
+  User user = 1;
+}
+
+message ListUsersRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+
+message ListUsersResponse {
+  repeated User users = 1;
+  string next_page_token = 2;
+}
+
+message CreateUserRequest {
+  string name = 1;
+  string email = 2;
+}
+
+message CreateUserResponse {
+  User user = 1;
+}
+
+message DeleteUserRequest {
+  string id = 1;
+}
+
+message DeleteUserResponse {}

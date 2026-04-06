@@ -1,0 +1,20 @@
+# Integration test configuration for pb-go-action.
+# This config is used by the integration-test GitHub Actions workflow.
+# It compiles the testdata/proto/user service and pushes the generated
+# Go + gRPC code to bangzzzz/pb-go-action-test.
+
+services:
+  - name: user-service
+    proto_dir: testdata/proto/user
+    target_repo: bangzzzz/pb-go-action-test
+    go_module: github.com/bangzzzz/pb-go-action-test
+    plugins:
+      - name: go
+        out: .
+        opt:
+          - paths=source_relative
+      - name: go-grpc
+        out: .
+        opt:
+          - paths=source_relative
+          - require_unimplemented_servers=false
